@@ -88,7 +88,7 @@ def kuka_IK(point, R, joint_positions):
     y = point[1]
     z = point[2]
     q = joint_positions #it must contain 7 elements
-
+    R = np.array(R)
     """
     Fill in your IK solution here and return the seven joint values in q
     """
@@ -96,29 +96,33 @@ def kuka_IK(point, R, joint_positions):
     # eps_theta = 0.1 * np.ones(len(joint_positions))
     theta_hat = np.array(joint_positions)
 
-    angle_X, angle_Y, angle_Z = get_euler_angles_from_T(np.array(R))
-    X = np.array([x, y, z, angle_X, angle_Y, angle_Z])
+    # angle_X, angle_Y, angle_Z = get_euler_angles_from_T(np.array(R))
+    X = np.array([x, y, z])
 
-    X_hat, intermediary_transforms = kuka_FK(theta_hat)
-    X_hat
+    X_hat, R_hat, intermediary_transforms = kuka_FK(theta_hat)
     eps_X = X_hat - X
+    # calculate the error on rotation from the rotation matrices directly, euler angles are buggy
+    eps_R = (np.cross(R[:,0], R_hat[:,0]) + np.cross(R[:,1], R_hat[:,1]) + np.cross(R[:,2], R_hat[:,2])) / 2.
 
-    tolerance = 0.003
+    eps = np.concatenate([eps_X, eps_R])
+    tolerance = 0.001
 
     # iterate the approximation until we get under the min tolerance
     
-    MAX_ITERATIONS = 100
+    MAX_ITERATIONS = 300
     iterations = 0
-    while np.mean(np.abs(eps_X)) >= tolerance and iterations < MAX_ITERATIONS:
+    while np.mean(np.abs(eps)) >= tolerance and iterations < MAX_ITERATIONS:
         J, J_inv = compute_jacobian(intermediary_transforms, theta_hat)
-        eps_theta = np.dot(J_inv, eps_X)
+        eps_theta = np.dot(J_inv, eps)
         # if iterations % 50 == 0:
         #     print(eps_theta)
         # print(eps_theta)
         theta_hat = theta_hat - eps_theta
         
-        X_hat, intermediary_transforms = kuka_FK(theta_hat)
+        X_hat, R_hat, intermediary_transforms = kuka_FK(theta_hat)
         eps_X = X_hat - X
+        eps_R = (np.cross(R[:,0], R_hat[:,0]) + np.cross(R[:,1], R_hat[:,1]) + np.cross(R[:,2], R_hat[:,2])) / 2.
+        eps = np.concatenate([eps_X, eps_R])
 
         iterations = iterations + 1
         # print(iterations)
@@ -128,6 +132,7 @@ def kuka_IK(point, R, joint_positions):
     q = theta_hat.tolist()
     return q
 
+# BUGGY
 def get_euler_angles_from_T(T):
     # Euler angles from the rotation part of the matrix
     #     | r11 r12 r13 |
@@ -140,11 +145,6 @@ def get_euler_angles_from_T(T):
     beta = 0.
     gamma = 0.
 
-    # beta = -math.pi / 2.
-    # alpha = math.atan2(-T[0,1], -T[0,2])
-    # gamma = 0.
-
-    
     if np.abs(T[2,0] + 1.) < 0.03:
         # print("NEGATIVE")
         beta = math.pi / 2.
@@ -156,13 +156,13 @@ def get_euler_angles_from_T(T):
         alpha = math.atan2(-T[0,1], -T[0,2])
         gamma = 0.
     else:
-        print("BASECASE")
+        # print("BASECASE")
         beta = -math.asin(T[2,0])
         cosBeta = math.cos(beta)
         alpha = math.atan2(T[2,1] / cosBeta, T[2,2] / cosBeta)
         gamma = math.atan2(T[1,0] / cosBeta, T[0,0] / cosBeta)
 
-    print(alpha, beta, gamma)
+    # print(alpha, beta, gamma)
     return alpha, beta, gamma
 
 
@@ -190,11 +190,13 @@ def kuka_FK(q):
         current_T = np.matmul(current_T, transform)
         intermediaries.append(current_T)
 
-    angle_X, angle_Y, angle_Z = get_euler_angles_from_T(current_T)
+    # angle_X, angle_Y, angle_Z = get_euler_angles_from_T(current_T)
     
-    X = [current_T[0,3], current_T[1,3], current_T[2,3], angle_X, angle_Y, angle_Z]
+    # split the position and rotation components, can't handle euler angles correctly :/
+    X = current_T[:3,3]
+    R = current_T[:3,:3]
     
-    return X, intermediaries
+    return X, R, intermediaries
 
 def compute_jacobian(transforms, q):
     #     | Jp (3 x n) |
